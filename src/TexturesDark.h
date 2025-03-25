@@ -27,7 +27,6 @@ uniform sampler2D tex;
 void main() {
     vec4 pixColor = texture2D(tex, v_texcoord);
 
-    invert(pixColor);
 
     gl_FragColor = pixColor;
 })glsl";
