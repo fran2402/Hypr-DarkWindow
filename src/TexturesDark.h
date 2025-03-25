@@ -8,13 +8,10 @@
 
 inline static const std::string DARK_MODE_FUNC = R"glsl(
 void invert(inout vec4 color) {
-    // Invert Colors
-    color.rgb = vec3(1.) - vec3(.88, .9, .92) * color.rgb;
-
-    // Invert Hue
-    color.rgb = dot(vec3(0.26312, 0.5283, 0.10488), color.rgb) * 2.0 - color.rgb;
+    if (color.rgb == vec3(0.0)) {
+        color.rgb = vec3(1.0); // Turn black into white
+    }
 }
-)glsl";
 
 
 inline const std::string TEXFRAGSRCCM_DARK = R"glsl(
