@@ -1,10 +1,18 @@
 #include "WindowInverter.h"
-
 #include <hyprutils/string/String.hpp>
 
+#include "DecorationsWrapper.h"
 
-void WindowInverter::OnRenderWindowPre(PHLWINDOW window)
+void WindowInverter::SetBackground(GLfloat r, GLfloat g, GLfloat b)
 {
+    bkgR = r;
+    bkgG = g;
+    bkgB = b;
+}
+
+void WindowInverter::OnRenderWindowPre()
+{
+    auto window = g_pHyprOpenGL->m_pCurrentWindow.lock();
     bool shouldInvert =
         (std::find(m_InvertedWindows.begin(), m_InvertedWindows.end(), window)
             != m_InvertedWindows.end()) ^
@@ -13,11 +21,18 @@ void WindowInverter::OnRenderWindowPre(PHLWINDOW window)
 
     if (shouldInvert)
     {
+        glUseProgram(m_Shaders.RGBA.program);
+        glUniform3f(m_Shaders.BKGA, bkgR, bkgG, bkgB);
+        glUseProgram(m_Shaders.RGBX.program);
+        glUniform3f(m_Shaders.BKGX, bkgR, bkgG, bkgB);
+        glUseProgram(m_Shaders.EXT.program);
+        glUniform3f(m_Shaders.BKGE, bkgR, bkgG, bkgB);
         std::swap(m_Shaders.EXT, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shEXT);
         std::swap(m_Shaders.RGBA, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBA);
         std::swap(m_Shaders.RGBX, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBX);
-        std::swap(m_Shaders.CM, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shCM);
         m_ShadersSwapped = true;
+
+        SoftToggle(true);
     }
 }
 
@@ -25,10 +40,20 @@ void WindowInverter::OnRenderWindowPost()
 {
     if (m_ShadersSwapped)
     {
+        if (m_DecorationsWrapped)
+        {
+            for (auto& decoration : g_pHyprOpenGL->m_pCurrentWindow.lock()->m_dWindowDecorations)
+            {
+                // Debug::log(LOG, "REMOVE: Window {:p}, Decoration {:p}", (void*)g_pHyprOpenGL->m_pCurrentWindow.get(), (void*)decoration.get());
+                if (DecorationsWrapper* wrapper = dynamic_cast<DecorationsWrapper*>(decoration.get()))
+                    decoration.reset(wrapper->take().release());
+            }
+            m_DecorationsWrapped = false;
+        }
+
         std::swap(m_Shaders.EXT, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shEXT);
         std::swap(m_Shaders.RGBA, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBA);
         std::swap(m_Shaders.RGBX, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBX);
-        std::swap(m_Shaders.CM, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shCM);
         m_ShadersSwapped = false;
     }
 }
@@ -48,9 +73,11 @@ void WindowInverter::OnWindowClose(PHLWINDOW window)
     remove(m_ManuallyInvertedWindows, window);
 }
 
-void WindowInverter::Init()
+void WindowInverter::Init(HANDLE pluginHandle)
 {
     m_Shaders.Init();
+
+    m_PluginHandle = pluginHandle;
 }
 
 void WindowInverter::Unload()
@@ -60,7 +87,6 @@ void WindowInverter::Unload()
         std::swap(m_Shaders.EXT, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shEXT);
         std::swap(m_Shaders.RGBA, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBA);
         std::swap(m_Shaders.RGBX, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBX);
-        std::swap(m_Shaders.CM, g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shCM);
         m_ShadersSwapped = false;
     }
 
@@ -74,7 +100,7 @@ void WindowInverter::InvertIfMatches(PHLWINDOW window)
 
     std::vector<SP<CWindowRule>> rules = g_pConfigManager->getMatchingRules(window);
     bool shouldInvert = std::any_of(rules.begin(), rules.end(), [](const SP<CWindowRule>& rule) {
-        return rule->szRule == "plugin:invertwindow";
+        return rule->szRule == "plugin:chromakey";
     });
 
     auto windowIt = std::find(m_InvertedWindows.begin(), m_InvertedWindows.end(), window);
@@ -110,6 +136,21 @@ void WindowInverter::ToggleInvert(PHLWINDOW window)
     g_pHyprRenderer->damageWindow(window);
 }
 
+void WindowInverter::SoftToggle(bool invert)
+{
+    if (m_ShadersSwapped)
+    {
+        const auto toggleInvert = [&](GLuint prog, GLint location) {
+            glUseProgram(prog);
+            glUniform1i(location, invert ? 1 : 0);
+        };
+
+        toggleInvert(g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shEXT.program, m_Shaders.EXT_Invert);
+        toggleInvert(g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBA.program, m_Shaders.RGBA_Invert);
+        toggleInvert(g_pHyprOpenGL->m_RenderData.pCurrentMonData->m_shRGBX.program, m_Shaders.RGBX_Invert);
+    }
+}
+
 
 void WindowInverter::Reload()
 {
@@ -117,4 +158,11 @@ void WindowInverter::Reload()
 
     for (const auto& window : g_pCompositor->m_vWindows)
         InvertIfMatches(window);
+
+    if (m_IgnoreDecorations) {
+        Hyprlang::CConfigValue* config = HyprlandAPI::getConfigValue(m_PluginHandle, "plugin:darkwindow:ignore_decorations");
+        if (config && config->dataPtr()) {
+            m_IgnoreDecorations = *((Hyprlang::INT*) config->dataPtr()) != 0;
+        }
+    }
 }
