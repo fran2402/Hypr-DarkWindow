@@ -5,18 +5,18 @@
 
 #include <hyprland/src/render/shaders/Textures.hpp>
 
-
+// Function to replace black with red.
 inline static const std::string DARK_MODE_FUNC = R"glsl(
-void invert(inout vec4 color) {
-    // Invert Colors
-    color.rgb = color.rgb;
-
-    // Invert Hue
-    color.rgb = color.rgb;
+void replaceBlackToRed(inout vec4 color) {
+    // Check if the color is exactly black (RGB == 0)
+    if (color.rgb == vec3(0.0)) {
+        // Replace black with red (#ff0000)
+        color.rgb = vec3(1.0, 0.0, 0.0);
+    }
 }
 )glsl";
 
-
+// CM shader: tint removed
 inline const std::string TEXFRAGSRCCM_DARK = R"glsl(
 precision highp float;
 varying vec2 v_texcoord;
@@ -27,10 +27,12 @@ uniform sampler2D tex;
 void main() {
     vec4 pixColor = texture2D(tex, v_texcoord);
 
+    replaceBlackToRed(pixColor);
 
     gl_FragColor = pixColor;
 })glsl";
 
+// RGBA shader: tint removed
 inline const std::string TEXFRAGSRCRGBA_DARK = R"glsl(
 precision highp float;
 varying vec2 v_texcoord; // is in 0-1
@@ -46,9 +48,6 @@ uniform int discardOpaque;
 uniform int discardAlpha;
 uniform float discardAlphaValue;
 
-uniform int applyTint;
-uniform vec3 tint;
-
 )glsl" + DARK_MODE_FUNC + R"glsl(
 
 void main() {
@@ -61,13 +60,7 @@ void main() {
     if (discardAlpha == 1 && pixColor[3] <= discardAlphaValue)
         discard;
 
-    if (applyTint == 1) {
-	    pixColor[0] = pixColor[0] * tint[0];
-	    pixColor[1] = pixColor[1] * tint[1];
-	    pixColor[2] = pixColor[2] * tint[2];
-    }
-
-    invert(pixColor);
+    replaceBlackToRed(pixColor);
 
     if (radius > 0.0) {
     )glsl" +
@@ -77,6 +70,7 @@ void main() {
     gl_FragColor = pixColor * alpha;
 })glsl";
 
+// RGBX shader: tint removed
 inline const std::string TEXFRAGSRCRGBX_DARK = R"glsl(
 precision highp float;
 varying vec2 v_texcoord;
@@ -92,25 +86,16 @@ uniform int discardOpaque;
 uniform int discardAlpha;
 uniform int discardAlphaValue;
 
-uniform int applyTint;
-uniform vec3 tint;
-
 )glsl" + DARK_MODE_FUNC + R"glsl(
 
 void main() {
 
     if (discardOpaque == 1 && alpha == 1.0)
-	discard;
+	    discard;
 
     vec4 pixColor = vec4(texture2D(tex, v_texcoord).rgb, 1.0);
 
-    if (applyTint == 1) {
-	pixColor[0] = pixColor[0] * tint[0];
-	pixColor[1] = pixColor[1] * tint[1];
-	pixColor[2] = pixColor[2] * tint[2];
-    }
-
-    invert(pixColor);
+    replaceBlackToRed(pixColor);
 
     if (radius > 0.0) {
     )glsl" +
@@ -120,6 +105,7 @@ void main() {
     gl_FragColor = pixColor * alpha;
 })glsl";
 
+// EXT shader: tint removed
 inline const std::string TEXFRAGSRCEXT_DARK = R"glsl(
 #extension GL_OES_EGL_image_external : require
 
@@ -137,9 +123,6 @@ uniform int discardOpaque;
 uniform int discardAlpha;
 uniform int discardAlphaValue;
 
-uniform int applyTint;
-uniform vec3 tint;
-
 )glsl" + DARK_MODE_FUNC + R"glsl(
 
 void main() {
@@ -147,15 +130,9 @@ void main() {
     vec4 pixColor = texture2D(texture0, v_texcoord);
 
     if (discardOpaque == 1 && pixColor[3] * alpha == 1.0)
-	discard;
+	    discard;
 
-    if (applyTint == 1) {
-	pixColor[0] = pixColor[0] * tint[0];
-	pixColor[1] = pixColor[1] * tint[1];
-	pixColor[2] = pixColor[2] * tint[2];
-    }
-
-    invert(pixColor);
+    replaceBlackToRed(pixColor);
 
     if (radius > 0.0) {
     )glsl" +
