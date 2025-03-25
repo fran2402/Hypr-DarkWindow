@@ -6,12 +6,12 @@
 #include <hyprland/src/render/shaders/Textures.hpp>
 
 
-inline static const std::string DARK_MODE_FUNC = R"glsl(
 void invert(inout vec4 color) {
     if (color.rgb == vec3(0.0)) {
-        color.rgb = vec3(1.0); // Turn black into white
+        color.a = 0.0; // Make black fully transparent
     }
 }
+
 
 
 inline const std::string TEXFRAGSRCCM_DARK = R"glsl(
