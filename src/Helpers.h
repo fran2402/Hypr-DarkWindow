@@ -3,9 +3,7 @@
 #include <string>
 #include <cstring>
 
-#include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/config/ConfigManager.hpp>
-#include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/render/OpenGL.hpp>
 
 #include "TexturesDark.h"
 
@@ -25,10 +23,17 @@ namespace std
 
 struct ShaderHolder
 {
-    CShader CM;
     CShader RGBA;
+    GLint RGBA_Invert;
     CShader RGBX;
+    GLint RGBX_Invert;
     CShader EXT;
+    GLint EXT_Invert;
+
+    // Holds the background color
+    GLint BKGA;
+    GLint BKGX;
+    GLint BKGE;
 
     void Init();
     void Destroy();
