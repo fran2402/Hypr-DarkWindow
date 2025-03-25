@@ -1,14 +1,11 @@
-#include <hyprland/src/render/pass/PassElement.hpp>
-
-#define private public
-#include <hyprland/src/render/pass/SurfacePassElement.hpp>
-#undef private
-
 #include "WindowInverter.h"
 
 #include <dlfcn.h>
 
+#include <hyprland/src/SharedDefs.hpp>
 #include <hyprlang.hpp>
+
+#include "DecorationsWrapper.h"
 
 
 inline HANDLE PHANDLE = nullptr;
@@ -17,22 +14,20 @@ inline WindowInverter g_WindowInverter;
 inline std::mutex g_InverterMutex;
 
 inline std::vector<SP<HOOK_CALLBACK_FN>> g_Callbacks;
-CFunctionHook* g_surfacePassDraw;
+CFunctionHook* g_getDataForHook;
 
-// TODO check out transformers
+// TODO remove deprecated
+static void addDeprecatedEventListeners();
 
-void hkSurfacePassDraw(CSurfacePassElement* thisptr, const CRegion& damage) {
+
+void* hkGetDataFor(void* thisptr, IHyprWindowDecoration* pDecoration, PHLWINDOW pWindow) {
+    if (DecorationsWrapper* wrapper = dynamic_cast<DecorationsWrapper*>(pDecoration))
     {
-        std::lock_guard<std::mutex> lock(g_InverterMutex);
-        g_WindowInverter.OnRenderWindowPre(thisptr->data.pWindow);
+        // Debug::log(LOG, "IGNORE: Decoration {}", (void*)pDecoration);
+        pDecoration = wrapper->get();
     }
 
-    ((decltype(&hkSurfacePassDraw))g_surfacePassDraw->m_pOriginal)(thisptr, damage);
-
-    {
-        std::lock_guard<std::mutex> lock(g_InverterMutex);
-        g_WindowInverter.OnRenderWindowPost();
-    }
+    return ((decltype(&hkGetDataFor))g_getDataForHook->m_pOriginal)(thisptr, pDecoration, pWindow);
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle)
@@ -41,10 +36,51 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle)
 
     {
         std::lock_guard<std::mutex> lock(g_InverterMutex);
-        g_WindowInverter.Init();
+        g_WindowInverter.Init(PHANDLE);
+        g_pConfigManager->m_bForceReload = true;
     }
 
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:darkwindow:ignore_decorations", Hyprlang::CConfigValue(Hyprlang::INT{ 0 }));
+
     g_Callbacks = {};
+
+    addDeprecatedEventListeners();
+
+    HyprlandAPI::addConfigKeyword(
+        handle, "chromakey_background",
+        [](const char* cmd, const char* val) -> Hyprlang::CParseResult {
+            // Parse val as "r,g,b" into 3 GLfloats
+            std::vector<std::string> result;
+            std::stringstream ss (val);
+            std::string component;
+
+            getline(ss, component, ',');
+            GLfloat r = std::stof(component);
+            getline(ss, component, ',');
+            GLfloat g = std::stof(component);
+            getline(ss, component, ',');
+            GLfloat b = std::stof(component);
+
+            g_WindowInverter.SetBackground(r, g, b);
+
+            return Hyprlang::CParseResult(); // return a default CParseResult
+        },
+        { .allowFlags = false }
+    );
+
+    g_Callbacks.push_back(HyprlandAPI::registerCallbackDynamic(
+        PHANDLE, "render",
+        [&](void* self, SCallbackInfo&, std::any data) {
+            std::lock_guard<std::mutex> lock(g_InverterMutex);
+            eRenderStage renderStage = std::any_cast<eRenderStage>(data);
+
+            if (renderStage == eRenderStage::RENDER_PRE_WINDOW)
+                g_WindowInverter.OnRenderWindowPre();
+            if (renderStage == eRenderStage::RENDER_POST_WINDOW)
+                g_WindowInverter.OnRenderWindowPost();
+        }
+    ));
+
     g_Callbacks.push_back(HyprlandAPI::registerCallbackDynamic(
         PHANDLE, "configReloaded",
         [&](void* self, SCallbackInfo&, std::any data) {
@@ -67,39 +103,68 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle)
         }
     ));
 
-    const auto findFunction = [&](const std::string& className, const std::string& name) {
-        auto all = HyprlandAPI::findFunctionsByName(PHANDLE, name);
-        auto found = std::find_if(all.begin(), all.end(), [&](const SFunctionMatch& line) {
-            return line.demangled.starts_with(className + "::" + name);
+    static const auto METHOD = ([&] {
+        auto all = HyprlandAPI::findFunctionsByName(PHANDLE, "getDataFor");
+        auto found = std::find_if(all.begin(), all.end(), [](const SFunctionMatch& line) {
+            return line.demangled.starts_with("CDecorationPositioner::getDataFor");
         });
         if (found != all.end())
             return std::optional(*found);
         else
             return std::optional<SFunctionMatch>();
-    };
+    })();
+    if (METHOD)
+    {
+        g_getDataForHook = HyprlandAPI::createFunctionHook(handle, METHOD->address, (void*)&hkGetDataFor);
+        g_getDataForHook->hook();
+    }
+    else
+    {
+        Debug::log(WARN, "[DarkWindow] Failed to hook CDecorationPositioner::getDataFor, cannot ignore Decorations");
+        g_WindowInverter.NoIgnoreDecorations();
+    }
 
-    static const auto pDraw = findFunction("CSurfacePassElement", "draw");
-    if (!pDraw) throw std::runtime_error("Failed to find CSurfacePassElement::draw");
-    g_surfacePassDraw = HyprlandAPI::createFunctionHook(handle, pDraw->address, (void*)&hkSurfacePassDraw);
-    g_surfacePassDraw->hook();
-
-    HyprlandAPI::addDispatcherV2(PHANDLE, "invertwindow", [&](std::string args) {
+    HyprlandAPI::addDispatcher(PHANDLE, "togglewindowchromakey", [&](std::string args) {
         std::lock_guard<std::mutex> lock(g_InverterMutex);
         g_WindowInverter.ToggleInvert(g_pCompositor->getWindowByRegex(args));
-        return SDispatchResult{};
     });
-    HyprlandAPI::addDispatcherV2(PHANDLE, "invertactivewindow", [&](std::string args) {
+    HyprlandAPI::addDispatcher(PHANDLE, "togglechromakey", [&](std::string args) {
         std::lock_guard<std::mutex> lock(g_InverterMutex);
         g_WindowInverter.ToggleInvert(g_pCompositor->m_pLastWindow.lock());
-        return SDispatchResult{};
     });
 
     return {
-        "Hypr-DarkWindow",
-        "Allows you to set dark mode for only specific Windows",
-        "micha4w",
-        "3.0.1"
+        "hyprchroma",
+        "Applies ChromaKey algorithm to windows for transparency effect",
+        "alexhulbert",
+        "1.0.0"
     };
+}
+
+// TODO remove deprecated
+inline static bool g_DidNotify = false;
+Hyprlang::CParseResult onInvertKeyword(const char* COMMAND, const char* VALUE)
+{
+    if (!g_DidNotify) {
+        g_DidNotify = true;
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[Hypr-DarkWindow] The darkwindow_invert keyword was removed in favor of windowrulev2s please check the GitHub for more info.",
+            { 0xFF'00'00'00 },
+            10000
+        );
+    }
+    return {};
+}
+
+// TODO remove deprecated
+static void addDeprecatedEventListeners()
+{
+    HyprlandAPI::addConfigKeyword(
+        PHANDLE, "chromakey_enable",
+        onInvertKeyword,
+        { .allowFlags = false }
+    );
 }
 
 APICALL EXPORT void PLUGIN_EXIT()
