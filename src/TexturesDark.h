@@ -5,35 +5,33 @@
 
 #include <hyprland/src/render/shaders/Textures.hpp>
 
-// New function: if the pixel color is black, set its alpha to 0.
-inline static const std::string BLACK_TO_TRANSPARENT_FUNC = R"glsl(
-void isolateBlack(inout vec4 color) {
-    // Set a threshold to account for floating-point imprecision.
-    float threshold = 0.01;
-    if (length(color.rgb) < threshold) {
-         color.a = 0.0;
+// Replace the old invert function with one that only affects black pixels.
+inline static const std::string COLORIZE_BLACK_FUNC = R"glsl(
+void colorizeBlack(inout vec4 color) {
+    // If the color is nearly black (adjust epsilon as needed)
+    if (length(color.rgb) < 0.01) {
+        // Set to orange (here: RGB(1.0, 0.65, 0.0) corresponds to #FFA500)
+        color.rgb = vec3(1.0, 0.65, 0.0);
     }
 }
 )glsl";
 
-// Example shader using the new function
-
-inline const std::string TEXFRAGSRCCM_DARK = R"glsl(
+// Example shader: for CM textures.
+inline const std::string TEXFRAGSRCCM_ORANGE = R"glsl(
 precision highp float;
 varying vec2 v_texcoord;
 uniform sampler2D tex;
-)glsl" + BLACK_TO_TRANSPARENT_FUNC + R"glsl(
+
+)glsl" + COLORIZE_BLACK_FUNC + R"glsl(
 
 void main() {
     vec4 pixColor = texture2D(tex, v_texcoord);
-
-    isolateBlack(pixColor);
-
+    colorizeBlack(pixColor);
     gl_FragColor = pixColor;
-}
-)glsl";
+})glsl";
 
-inline const std::string TEXFRAGSRCRGBA_DARK = R"glsl(
+// Similar modifications for the RGBA variant.
+inline const std::string TEXFRAGSRCRGBA_ORANGE = R"glsl(
 precision highp float;
 varying vec2 v_texcoord; // is in 0-1
 uniform sampler2D tex;
@@ -50,7 +48,8 @@ uniform float discardAlphaValue;
 
 uniform int applyTint;
 uniform vec3 tint;
-)glsl" + BLACK_TO_TRANSPARENT_FUNC + R"glsl(
+
+)glsl" + COLORIZE_BLACK_FUNC + R"glsl(
 
 void main() {
 
@@ -68,7 +67,7 @@ void main() {
 	    pixColor[2] = pixColor[2] * tint[2];
     }
 
-    isolateBlack(pixColor);
+    colorizeBlack(pixColor);
 
     if (radius > 0.0) {
     )glsl" +
@@ -76,10 +75,10 @@ void main() {
     }
 
     gl_FragColor = pixColor * alpha;
-}
-)glsl";
+})glsl";
 
-inline const std::string TEXFRAGSRCRGBX_DARK = R"glsl(
+// And for the RGBX variant.
+inline const std::string TEXFRAGSRCRGBX_ORANGE = R"glsl(
 precision highp float;
 varying vec2 v_texcoord;
 uniform sampler2D tex;
@@ -96,7 +95,8 @@ uniform int discardAlphaValue;
 
 uniform int applyTint;
 uniform vec3 tint;
-)glsl" + BLACK_TO_TRANSPARENT_FUNC + R"glsl(
+
+)glsl" + COLORIZE_BLACK_FUNC + R"glsl(
 
 void main() {
 
@@ -111,7 +111,7 @@ void main() {
 	    pixColor[2] = pixColor[2] * tint[2];
     }
 
-    isolateBlack(pixColor);
+    colorizeBlack(pixColor);
 
     if (radius > 0.0) {
     )glsl" +
@@ -119,10 +119,10 @@ void main() {
     }
 
     gl_FragColor = pixColor * alpha;
-}
-)glsl";
+})glsl";
 
-inline const std::string TEXFRAGSRCEXT_DARK = R"glsl(
+// And finally for the external texture variant.
+inline const std::string TEXFRAGSRCEXT_ORANGE = R"glsl(
 #extension GL_OES_EGL_image_external : require
 
 precision highp float;
@@ -141,7 +141,8 @@ uniform int discardAlphaValue;
 
 uniform int applyTint;
 uniform vec3 tint;
-)glsl" + BLACK_TO_TRANSPARENT_FUNC + R"glsl(
+
+)glsl" + COLORIZE_BLACK_FUNC + R"glsl(
 
 void main() {
 
@@ -156,7 +157,7 @@ void main() {
 	    pixColor[2] = pixColor[2] * tint[2];
     }
 
-    isolateBlack(pixColor);
+    colorizeBlack(pixColor);
 
     if (radius > 0.0) {
     )glsl" +
